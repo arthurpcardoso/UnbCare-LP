@@ -36,9 +36,10 @@ Caso o remédio ainda não exista no estoque, o novo estoque a ser retornado dev
 -}
 
 comprarMedicamento :: Medicamento -> Quantidade -> EstoqueMedicamentos -> EstoqueMedicamentos
-comprarMedicamento med quant estoque = case lookup med estoque of
-   Just quantAtual -> (med, quantAtual + quant) : filter (\(m, _) -> m /= med) estoque
-   Nothing -> (med, quant) : estoque
+comprarMedicamento med qtd [] = [(med, qtd)]
+comprarMedicamento med qtd ((m, q):resto)
+    | med == m   = (m, q + qtd) : resto
+    | otherwise  = (m, q) : comprarMedicamento med qtd resto
 
 {-
    QUESTÃO 2, VALOR: 1,0 ponto
@@ -51,7 +52,11 @@ onde v é o novo estoque.
 -}
 
 tomarMedicamento :: Medicamento -> EstoqueMedicamentos -> Maybe EstoqueMedicamentos
-tomarMedicamento = undefined
+tomarMedicamento med estoque = case lookup med estoque of
+   Just quantAtual -> if quantAtual > 0
+      then Just $ (med, quantAtual - 1) : filter (\(m, _) -> m /= med) estoque
+      else Nothing
+   Nothing -> Nothing
 
 {-
    QUESTÃO 3  VALOR: 1,0 ponto
@@ -63,7 +68,9 @@ Se o medicamento não existir, retorne 0.
 -}
 
 consultarMedicamento :: Medicamento -> EstoqueMedicamentos -> Quantidade
-consultarMedicamento = undefined
+consultarMedicamento med estoque = case lookup med estoque of
+   Just quant -> quant
+   Nothing -> 0
 
 {-
    QUESTÃO 4  VALOR: 1,0 ponto
@@ -79,7 +86,8 @@ consultarMedicamento = undefined
 -}
 
 demandaMedicamentos :: Receituario -> EstoqueMedicamentos
-demandaMedicamentos = undefined
+demandaMedicamentos receituario = foldr (\(med, horarios) acc -> (med, length horarios) : acc) [] receituario
+
 
 {-
    QUESTÃO 5  VALOR: 1,0 ponto, sendo 0,5 para cada função.
@@ -93,12 +101,34 @@ demandaMedicamentos = undefined
  Defina as funções "receituarioValido" e "planoValido" que verifiquem as propriedades acima e cujos tipos são dados abaixo:
 
  -}
+ -- | Verifica se uma lista tem todos os elementos distintos
+todoDistintos :: Eq a => [a] -> Bool
+todoDistintos [] = True
+todoDistintos (x:xs) = x `notElem` xs && todoDistintos xs
+
+-- | Verifica se uma lista está ordenada
+estaOrdenada :: Ord a => [a] -> Bool
+estaOrdenada [] = True
+estaOrdenada [_] = True
+estaOrdenada (x:y:xs) = x <= y && estaOrdenada (y:xs)
 
 receituarioValido :: Receituario -> Bool
-receituarioValido = undefined
+receituarioValido receituario =
+  let medicamentos = map fst receituario
+      medicamentosDistintos = todoDistintos medicamentos
+      medicamentosOrdenados = estaOrdenada medicamentos
+      horariosValidosPorMedicamento = 
+        all (\(_, horarios) -> estaOrdenada horarios && todoDistintos horarios) receituario
+  in medicamentosDistintos && medicamentosOrdenados && horariosValidosPorMedicamento
 
 planoValido :: PlanoMedicamento -> Bool
-planoValido = undefined
+planoValido plano =
+  let horarios = map fst plano
+      horariosDistintos = todoDistintos horarios
+      horariosOrdenados = estaOrdenada horarios
+      medicamentosValidosPorHorario = 
+        all (\(_, medicamentos) -> todoDistintos medicamentos && estaOrdenada medicamentos) plano
+  in horariosDistintos && horariosOrdenados && medicamentosValidosPorHorario
 
 {-
 
@@ -114,8 +144,43 @@ planoValido = undefined
 
  -}
 
+-- Remove duplicatas de uma lista
+removeDuplicatas :: Eq a => [a] -> [a]
+removeDuplicatas [] = []
+removeDuplicatas (x:xs) 
+  | x `elem` xs = removeDuplicatas xs
+  | otherwise = x : removeDuplicatas xs
+
+-- Ordena uma lista (usando insertion sort)
+ordenar :: Ord a => [a] -> [a]
+ordenar [] = []
+ordenar (x:xs) = inserir x (ordenar xs)
+  where
+    inserir y [] = [y]
+    inserir y (z:zs)
+      | y <= z = y : z : zs
+      | otherwise = z : inserir y zs
+
 plantaoValido :: Plantao -> Bool
-plantaoValido = undefined
+plantaoValido plantao =
+  let horarios = map fst plantao
+      horariosDistintos = todoDistintos horarios
+      horariosOrdenados = estaOrdenada horarios
+      
+      -- Verifica se não há compra e medicagem do mesmo medicamento no mesmo horário
+      semCompraEMedicacaoSimultanea (_, cuidados) =
+        let medicamentosComprados = [m | Comprar m _ <- cuidados]
+            medicamentosMedicados = [m | Medicar m <- cuidados]
+        in null [m | m <- medicamentosComprados, m `elem` medicamentosMedicados]
+      
+      -- Verifica se as medicações estão ordenadas lexicograficamente
+      medicacoesOrdenadas (_, cuidados) =
+        let medicacoes = [m | Medicar m <- cuidados]
+        in estaOrdenada medicacoes
+      
+  in horariosDistintos && horariosOrdenados && 
+     all semCompraEMedicacaoSimultanea plantao && 
+     all medicacoesOrdenadas plantao
 
 {-
    QUESTÃO 7  VALOR: 1,0 ponto
@@ -128,9 +193,47 @@ plantaoValido = undefined
 
 -}
 
+-- | Gera um plano de medicamento a partir de um receituário válido
 geraPlanoReceituario :: Receituario -> PlanoMedicamento
-geraPlanoReceituario = undefined
-
+geraPlanoReceituario receituario =
+  let -- Expande o receituário para pares (horário, medicamento)
+      expandeReceituario :: Receituario -> [(Horario, Medicamento)]
+      expandeReceituario [] = []
+      expandeReceituario ((med, horarios):resto) = 
+        [(h, med) | h <- horarios] ++ expandeReceituario resto
+      
+      -- Agrupa por horário
+      agrupaHorarios :: [(Horario, Medicamento)] -> [(Horario, [Medicamento])]
+      agrupaHorarios [] = []
+      agrupaHorarios pares =
+        let
+          -- Ordena pares por horário
+          ordenaPares = ordenar pares
+          
+          -- Agrupa por horário
+          agrupaPorHorario [] = []
+          agrupaPorHorario ((h, m):resto) =
+            let medicamentosNoHorario = m : [med | (hor, med) <- resto, hor == h]
+                restoHorarios = [(hor, med) | (hor, med) <- resto, hor /= h]
+                medicamentosOrdenados = ordenar (removeDuplicatas medicamentosNoHorario)
+            in (h, medicamentosOrdenados) : agrupaPorHorario restoHorarios
+        in agrupaPorHorario ordenaPares
+      
+      -- Ordena o plano final pelos horários
+      ordenaPorHorario :: [(Horario, [Medicamento])] -> [(Horario, [Medicamento])]
+      ordenaPorHorario = ordenar
+      
+      -- Todos os horários únicos no receituário, ordenados
+      todosHorarios = ordenar $ removeDuplicatas $ concatMap snd receituario
+      
+      -- Todos os medicamentos para um dado horário
+      medicamentosNoHorario h = [med | (med, hs) <- receituario, h `elem` hs]
+      
+      -- Monta o plano diretamente, mais eficiente
+      montaPlano = [(h, ordenar $ removeDuplicatas $ medicamentosNoHorario h) | h <- todosHorarios]
+  
+  in montaPlano  -- Versão mais eficiente
+  
 {- QUESTÃO 8  VALOR: 1,0 ponto
 
  Defina a função "geraReceituarioPlano", cujo tipo é dado abaixo e que retorna um receituário válido a partir de um
@@ -141,8 +244,22 @@ geraPlanoReceituario = undefined
 
 -}
 
+-- | Converte um plano de medicamentos para um receituário
+-- | PlanoMedicamento: [(Horario, [Medicamento])] -> Receituario: [(Medicamento, [Horario])]
 geraReceituarioPlano :: PlanoMedicamento -> Receituario
-geraReceituarioPlano = undefined
+geraReceituarioPlano plano =
+    -- Agrupa os medicamentos e seus horários correspondentes
+    let medicamentosHorarios = concatMap (\(h, meds) -> [(med, h) | med <- meds]) plano
+        -- Agrupa os horários por medicamento
+        agrupado = foldr (\(med, h) acc -> insertMedHorario med h acc) [] medicamentosHorarios
+    in agrupado
+  where
+    -- Função auxiliar para inserir um horário na lista de horários de um medicamento
+    insertMedHorario :: Medicamento -> Horario -> Receituario -> Receituario
+    insertMedHorario med h [] = [(med, [h])]
+    insertMedHorario med h ((m, hs):rest)
+        | med == m  = (m, h:hs) : rest
+        | otherwise = (m, hs) : insertMedHorario med h rest
 
 {-  QUESTÃO 9 VALOR: 1,0 ponto
 
@@ -154,8 +271,17 @@ deve ser Just v, onde v é o valor final do estoque de medicamentos
 -}
 
 executaPlantao :: Plantao -> EstoqueMedicamentos -> Maybe EstoqueMedicamentos
-executaPlantao = undefined
-
+executaPlantao [] estoque = Just estoque
+executaPlantao ((_, []):resto) estoque = executaPlantao resto estoque
+executaPlantao ((hora, (Comprar med qtd):cuidadosResto):plantaoResto) estoque =
+  -- Executa a compra e continua com os cuidados restantes no mesmo horário
+  let novoEstoque = comprarMedicamento med qtd estoque
+  in executaPlantao ((hora, cuidadosResto):plantaoResto) novoEstoque
+executaPlantao ((hora, (Medicar med):cuidadosResto):plantaoResto) estoque =
+  -- Executa a medicação e continua com os cuidados restantes se possível
+  case tomarMedicamento med estoque of
+    Nothing -> Nothing  -- Falha se não houver medicamento suficiente
+    Just novoEstoque -> executaPlantao ((hora, cuidadosResto):plantaoResto) novoEstoque
 {-
 QUESTÃO 10 VALOR: 1,0 ponto
 
@@ -169,7 +295,25 @@ juntamente com ministrar medicamento.
 -}
 
 satisfaz :: Plantao -> PlanoMedicamento -> EstoqueMedicamentos -> Bool
-satisfaz = undefined
+satisfaz plantao plano estoque =
+  -- Verifica se o plantão pode ser executado completamente
+  case executaPlantao plantao estoque of
+    Nothing -> False  -- Se o plantão não pode ser executado, não satisfaz o plano
+    Just _ -> 
+      -- Verifica se todos os medicamentos prescritos no plano são ministrados no plantão
+      all (\(horario, medicamentosPlano) -> 
+        -- Para cada horário no plano, verifica se todos seus medicamentos são ministrados
+        case lookup horario medicacoesPlantao of
+          Nothing -> False  -- Se não há medicações neste horário no plantão
+          Just medicamentosMinistrados -> 
+            all (`elem` medicamentosMinistrados) medicamentosPlano
+      ) plano
+  where
+    -- Cria um mapeamento de horários para medicamentos ministrados no plantão
+    medicacoesPlantao = 
+      [(h, [med | Medicar med <- cuidados]) | 
+       (h, cuidados) <- plantao, 
+       not (null [med | Medicar med <- cuidados])]
 
 {-
 
@@ -182,4 +326,37 @@ QUESTÃO 11 VALOR: 1,0 ponto
 -}
 
 plantaoCorreto :: PlanoMedicamento -> EstoqueMedicamentos -> Plantao
-plantaoCorreto = undefined
+plantaoCorreto plano estoque =
+  let
+    -- Função que gera os cuidados para um horário específico
+    gerarCuidadosHorario :: (Horario, [Medicamento]) -> EstoqueMedicamentos -> ([Cuidado], EstoqueMedicamentos)
+    gerarCuidadosHorario (_, []) estq = ([], estq)  -- Sem medicamentos, sem cuidados
+    gerarCuidadosHorario (h, (med:meds)) estq =
+      let qtdDisponivel = consultarMedicamento med estq
+          -- Se não há medicamento suficiente, precisa comprar
+          (compras, estq') = if qtdDisponivel == 0
+                             then ([Comprar med 1], comprarMedicamento med 1 estq)
+                             else ([], estq)
+          -- Medica o paciente com o medicamento atual
+          estq'' = case tomarMedicamento med estq' of
+                     Just novoEstq -> novoEstq
+                     Nothing -> error "Impossível: acabou de comprar o medicamento"
+          -- Gera cuidados para os medicamentos restantes
+          (cuidadosResto, estqFinal) = gerarCuidadosHorario (h, meds) estq''
+      in (compras ++ [Medicar med] ++ cuidadosResto, estqFinal)
+    
+    -- Gera o plantão a partir do plano, verificando o estoque
+    gerarPlantao :: PlanoMedicamento -> EstoqueMedicamentos -> Plantao
+    gerarPlantao [] _ = []
+    gerarPlantao ((h, meds):resto) estq =
+      let -- Ordena os medicamentos para garantir que o plantão seja válido
+          medicamentosOrdenados = sort meds
+          (cuidados, novoEstq) = gerarCuidadosHorario (h, medicamentosOrdenados) estq
+      in (h, cuidados) : gerarPlantao resto novoEstq
+    
+    -- Função auxiliar para ordenar uma lista
+    sort :: Ord a => [a] -> [a]
+    sort [] = []
+    sort (x:xs) = sort [y | y <- xs, y <= x] ++ [x] ++ sort [y | y <- xs, y > x]
+    
+  in gerarPlantao plano estoque
